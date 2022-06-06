@@ -1,0 +1,412 @@
+---
+output: 
+  html_document:
+    toc: true
+    toc_float: 
+      collapsed: false
+  number_sections: true
+ 
+title: ""
+author: "[User-764Q](https://github.com/User-764Q)"
+date: "`r paste0('Last Run: ', format(Sys.time(), '%A %d-%B-%Y'))`"
+params: 
+  param1: "Don't Forget about params"
+
+---
+
+<style>
+
+#TOC {
+ font-family: Calibri; 
+ font-size: 16px;
+ border-color: #3D68DF;
+ background: #3D68DF;
+}
+
+body {
+  font-family: Garamond;
+  font-size: 16px; 
+  border-color: #D0D0D0;
+  background-color: #D0D0D0;
+  color: #1A1A1A;
+}
+
+pre {
+  color: #1A1A1A
+  background: #D0D0D0;
+  background-color: #D0D0D0
+  font-family: Calibri; 
+  
+}
+
+</style>
+
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+knitr::opts_chunk$set(collapse = TRUE)
+
+knitr::opts_chunk$set(warning = FALSE)
+
+knitr::opts_chunk$set(message = FALSE)
+
+knitr::opts_chunk$set(include = TRUE)
+
+custom_black <- '1A1A1A'
+custom_white <- 'C0C0C0'
+custom_grey_dark <- '6F6F6F'
+custom_grey_light <- 'B2B2B2'
+custom_accent_blue <- '3D6BFF'
+
+```
+
+```{r libraries etc., message = FALSE }
+
+library(gmp)
+library(ggthemes)
+library(assertive)
+library(tidyverse)
+library(openxlsx)
+library(lubridate)
+library(data.table)
+
+```
+
+```{r dataload}
+
+
+
+```
+
+# Weekly Data Analysis 1
+
+## Unsupervised Learning LIBS Potatoe Data 
+
+### Introduction
+
+#### Kaggle Potato Laser, Induced, Breakdown Spectroscopy Data
+
+I pulled this data set from [Kaggle]('https://www.kaggle.com/datasets/adolfocobo/libs-potatoes'), it is pretty sparseley described and I have had to make a few assumptions. 
+
+The 'Class Variable' I'm assuming is 'Potatae' so they have lots of measurements of 10 different potatoes, presumably different varieties. 
+
+There are 15,211 measurements, these are measurements of intensity ranging from 'in theory' 0 - 65,535. In practive negative values occur down to about -100 in the first couple of columns. I assume this is just noise but I'll leave it in for now. 
+
+### Reading in the data  
+
+```{r }
+
+column_names <- c('Potatoe', paste0('F-', 1:15211))
+
+raw_data <- read.csv('LIBS.csv', 
+                     header = FALSE, col.names = column_names)
+
+# Remove row one because I can't figure out what potatoe it is
+
+cleaned_data <- raw_data %>%
+# Remove row one because I can't figure out what potatoe it is
+  filter(Potatoe != 'class') %>%
+  mutate(Potatoe = as.numeric(Potatoe))
+
+all_rows <- 1:2127 
+
+training_rows <- sample(all_rows, 1000)
+
+other_rows <-  !all_rows %in% training_rows 
+
+samlpe_data <- cleaned_data[other_rows, ] 
+  
+training_data <- cleaned_data[training_rows, ]
+
+test_data <- cleaned_data[1:100, ]
+
+```
+
+### Principal Component Analysis 
+
+#### Aggregating the data at Potatoe Level
+
+There are so many features in this data set I'm going to use principal component 
+analysis PCA to aggregate it up in a sensible way. 
+
+I think I need to do an aggregation of each potatoe or potatoe type before doing the PCA 
+
+I can't figure out an elegant way to do it and I'm worried that this isn't the right method 
+as it looses info on the within potate variance for each variable. 
+
+```{r}
+
+potatoes <- cleaned_data %>%
+  pull(Potatoe) %>%
+  unique()
+
+agg_data <- NULL 
+
+for (potatoe in potatoes) {
+  
+  this_round <- cleaned_data %>%
+    filter(Potatoe == potatoe)
+  
+  this_row <- colMeans(this_round) 
+    
+  agg_data <- cbind(agg_data, this_row)
+  
+}
+
+agg_data <- agg_data %>% t()
+
+```
+
+```{r}
+
+agg_data <- agg_data %>%
+  data.frame(row.names = paste0('Tater_', 1:10))
+
+pr_result <- prcomp(agg_data[,2:15212])
+
+pr_result$x <- pr_result$x * -1
+
+pr_result$rotation <- pr_result$rotation * -1
+
+biplot(pr_result, arrow.len = 0)
+
+```
+
+### Hierarchical Clustering 
+
+```{r}
+
+dist_data <- dist(agg_data)
+
+hclust_data <- hclust(dist_data) 
+
+plot(hclust_data)
+
+
+```
+
+### KMeans Clustering
+
+#### Initial Nieve K-Means Clustering 
+
+Using 10 Clusters 
+
+```{r}
+library(factoextra)
+library(cluster)
+
+training_data <- training_data %>%
+  na.omit()
+
+k_result <- kmeans(training_data[, 2:15212], 10)
+
+fviz_cluster(k_result, data = training_data[, 2:15212])
+
+```
+
+#### Detrimining number of clusters 
+
+```{r}
+
+fviz_nbclust(training_data, kmeans, method = "wss")
+
+```
+
+Lets go with three running the model. 
+
+Three clusters matches the results of H Clustering I did earlier. 
+
+```{r}
+
+k3_train_data <- training_data[, 2:15212] %>%
+  na.omit()
+
+k3_result <- kmeans(k3_train_data, 3)
+
+fviz_cluster(k3_result, k3_train_data)
+
+```
+#### Seeing how the Potato types map to the clusters
+
+```{r}
+
+mapped_data <- data.frame(cluster = k3_result$cluster, 
+                          Potatoe = training_data$Potatoe)
+
+mapped_data <- mapped_data %>% 
+  mutate(Potatoe_fct = as.factor(Potatoe))
+       
+mapped_data$cluster <- k3_result$cluster
+
+mapped_data$Potatoe <- training_data$Potatoe
+
+mapped_data %>%
+  ggplot(aes(x = cluster, y = Potatoe, col = Potatoe_fct, fill = Potatoe_fct)) +
+  geom_col()
+
+```
+
+This demonstrates a very poor fit between cluster and potatoe. Each of the three clusters seems to have a pretty even spread of the different potatoe types. 
+
+Maybe this has been under fit. 
+
+Lets repeat the above vizualisation with 10 clusters. 
+
+```{r}
+
+k3_train_data <- training_data[, 2:15212] %>%
+  na.omit()
+
+k3_result <- kmeans(k3_train_data, 10)
+
+fviz_cluster(k3_result, k3_train_data)
+
+```
+#### Seeing how the Potato types map to the clusters
+
+```{r}
+
+mapped_data <- data.frame(cluster = k3_result$cluster, 
+                          Potatoe = training_data$Potatoe)
+
+mapped_data <- mapped_data %>% 
+  mutate(Potatoe_fct = as.factor(Potatoe)) %>%
+  mutate(cluster_fct = as.factor(cluster))
+       
+mapped_data$cluster <- k3_result$cluster
+
+mapped_data$Potatoe <- training_data$Potatoe 
+
+mapped_data %>%
+  ggplot(aes(x = Potatoe_fct, y = cluster_fct, col = cluster_fct, fill = cluster_fct)) +
+  geom_col(position = 'stack')
+
+```
+
+
+```{r}
+
+mapped_data <- data.frame(cluster = k3_result$cluster, 
+                          Potatoe = training_data$Potatoe)
+
+mapped_data <- mapped_data %>% 
+  mutate(Potatoe_fct = as.factor(Potatoe)) %>%
+  mutate(cluster_fct = as.factor(cluster))%>%
+  mutate(h_Group = recode(mapped_data$Potatoe, 
+                          `5` = '1',
+                          `8` = '1',
+                          `9` = '1',
+                          `10` = '1',
+                          `4`= '2', 
+                          `7` = '2', 
+                          `1` = '2',
+                          `2` = '3',
+                          `3` = '3',
+                          `6` = '3',
+                          default = '0'))
+       
+mapped_data$cluster <- k3_result$cluster
+
+mapped_data$Potatoe <- training_data$Potatoe 
+
+mapped_data %>%
+  ggplot(aes(x = Potatoe_fct, y = cluster_fct, col = cluster_fct, fill = cluster_fct)) +
+  geom_col(position = 'stack') + 
+  facet_wrap(~h_Group)
+
+```
+
+```{r}
+
+k3_train_data <- training_data[, 2:15212] %>%
+  na.omit()
+
+k3_result <- kmeans(k3_train_data, 3)
+
+fviz_cluster(k3_result, k3_train_data)
+
+h3_group_data <- training_data %>% 
+  mutate(h_Group = recode(Potatoe, 
+                          `5` = '1',
+                          `8` = '1',
+                          `9` = '1',
+                          `10` = '1',
+                          `4`= '2', 
+                          `7` = '2', 
+                          `1` = '2',
+                          `2` = '3',
+                          `3` = '3',
+                          `6` = '3',
+                          default = '0')) %>%
+  select(Potatoe, h_Group)
+
+h3_group_data$cluster <- k3_result$cluster 
+
+h3_group_data <- h3_group_data %>% 
+  mutate(cluster = factor(cluster))
+
+ggplot(h3_group_data, aes(x = h_Group, y = cluster, fill = cluster)) +
+  geom_col()
+
+```
+
+```{r}
+
+h3_group_data %>% 
+  mutate(potatoe_fct = factor(Potatoe, levels = 1:10, order = 1:10)) %>%
+ggplot(aes(x = h_Group, 
+           y = cluster, 
+           fill = potatoe_fct, 
+           col = potatoe_fct)) +
+  geom_col(position = 'dodge')
+
+```
+
+
+```{r}
+
+h3_group_data %>% 
+  mutate(potatoe_fct = factor(Potatoe, levels = 1:10, order = 1:10)) %>%
+ggplot(aes(x = h_Group, 
+           y = cluster, 
+           fill = potatoe_fct, 
+           col = potatoe_fct)) +
+  geom_jitter()
+
+```
+
+```{r}
+
+h3_group_data %>% 
+  mutate(potatoe_fct = factor(Potatoe, levels = 1:10, order = 1:10)) %>%
+ggplot(aes(x = h_Group, 
+           y = cluster, 
+           fill = cluster, 
+           col = cluster)) +
+  geom_jitter()
+
+```
+
+
+```{r}
+
+h3_group_data %>%
+  mutate(potatoe_fct = factor(Potatoe, levels = 1:10, order = 1:10)) %>%
+  ggplot(aes(x = h_Group, y = cluster, col = h_Group)) + 
+  geom_jitter()
+  
+```
+
+```{r}
+
+cross_tab <- h3_group_data %>%
+  group_by(h_Group, cluster) %>%
+  summarise(Potatoes = n()) %>%
+  pivot_wider(cluster, names_from = h_Group, values_from = Potatoes)
+
+cross_tab
+
+```
+
