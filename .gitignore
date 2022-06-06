@@ -37,3 +37,7 @@ vignettes/*.pdf
 
 # R Environment Variables
 .Renviron
+
+# Data set is big so ignoring it, it is available on Kaggle 56mb zipped
+LIBS.csv
+
